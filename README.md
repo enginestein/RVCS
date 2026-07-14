@@ -5,7 +5,7 @@
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange)]()
 
-> **rvcs** is a lightweight, Git-inspired version control system written in Rust. It provides content-addressable storage, branching, and a clean CLI — all without any external server or daemon. Perfect for local projects, learning VCS internals, or embedding in tools.
+> **rvcs** is a lightweight version control system written in Rust. It provides content-addressable storage, branching, and a clean CLI — all without any external server or daemon.
 
 ---
 
@@ -36,7 +36,6 @@
   - [Contributing](#contributing)
     - [Code Style](#code-style)
   - [License](#license)
-  - [Acknowledgments](#acknowledgments)
   - [FAQ](#faq)
 
 ---
@@ -324,19 +323,6 @@ cargo test -- --nocapture
 ## License
 
 MIT License
-
----
-
-## Acknowledgments
-
-- Inspired by [Git](https://git-scm.com/) internals
-- Built with Rust's excellent standard library and ecosystem:
-  - `clap` — CLI parsing
-  - `sha1` — Content hashing
-  - `flate2` — Zlib compression
-  - `chrono` — Timestamps
-  - `thiserror` — Error handling
-  - `tempfile` — Test isolation
 
 ---
 
