@@ -20,6 +20,7 @@
     - [Prerequisites](#prerequisites)
     - [Build from Source](#build-from-source)
     - [Install using script](#install-using-script)
+    - [Install Globally (Optional)](#install-globally-optional)
     - [Verify Installation](#verify-installation)
   - [Quick Start](#quick-start)
   - [Commands Reference](#commands-reference)
@@ -108,7 +109,7 @@ cargo build --release
 
 ### Install using script
 
-``bash
+```bash
 
 bash scripts/install.sh
 
