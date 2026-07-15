@@ -19,7 +19,7 @@
   - [Installation](#installation)
     - [Prerequisites](#prerequisites)
     - [Build from Source](#build-from-source)
-    - [Install Globally (Optional)](#install-globally-optional)
+    - [Install using script](#install-using-script)
     - [Verify Installation](#verify-installation)
   - [Quick Start](#quick-start)
   - [Commands Reference](#commands-reference)
@@ -104,6 +104,14 @@ cd rvcs
 cargo build --release
 
 # Binary is at: ./target/release/rvcs
+```
+
+### Install using script
+
+``bash
+
+bash scripts/install.sh
+
 ```
 
 ### Install Globally (Optional)
