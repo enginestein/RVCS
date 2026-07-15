@@ -1,10 +1,12 @@
 use crate::core::repository::{FileStatus, Repository};
 use crate::error::Result;
+use crate::utils::color::Color;
 use std::path::Path;
 
 pub fn execute(repo_path: &Path) -> Result<()> {
     let repo = Repository::open(repo_path)?;
     let files = repo.get_working_tree_files()?;
+    let c = Color::new();
 
     let mut new_files = Vec::new();
     let mut modified_files = Vec::new();
@@ -19,7 +21,6 @@ pub fn execute(repo_path: &Path) -> Result<()> {
         }
     }
 
-    // Check for files in index but not in working tree (deleted)
     for (path, _) in repo.index.entries_sorted() {
         let full_path = repo.root.join(path);
         if !full_path.exists() && !deleted_files.contains(path) {
@@ -28,28 +29,28 @@ pub fn execute(repo_path: &Path) -> Result<()> {
     }
 
     if new_files.is_empty() && modified_files.is_empty() && deleted_files.is_empty() {
-        println!("nothing to commit, working tree clean");
+        println!("{}", c.green("nothing to commit, working tree clean"));
         return Ok(());
     }
 
     if !new_files.is_empty() {
-        println!("Changes staged for commit:");
+        println!("{}", c.header("Changes staged for commit:"));
         for file in &new_files {
-            println!("\tnew file:   {}", file.display());
+            println!("\t{} {}", c.green("new file:"), file.display());
         }
     }
 
     if !modified_files.is_empty() {
-        println!("Changes staged for commit:");
+        println!("{}", c.header("Changes staged for commit:"));
         for file in &modified_files {
-            println!("\tmodified:   {}", file.display());
+            println!("\t{} {}", c.yellow("modified:"), file.display());
         }
     }
 
     if !deleted_files.is_empty() {
-        println!("Changes not staged for commit:");
+        println!("{}", c.header("Changes not staged for commit:"));
         for file in &deleted_files {
-            println!("\tdeleted:    {}", file.display());
+            println!("\t{} {}", c.red("deleted:"), file.display());
         }
     }
 

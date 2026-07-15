@@ -1,15 +1,16 @@
 use crate::core::repository::Repository;
 use crate::error::Result;
+use crate::utils::color::Color;
 use std::path::Path;
 
 pub fn execute(repo_path: &Path, commit_hash: &str) -> Result<()> {
     let mut repo = Repository::open(repo_path)?;
+    let c = Color::new();
 
-    // Verify the commit exists
     let _ = repo.load_object(commit_hash)?;
 
     repo.checkout_commit(commit_hash)?;
-    println!("HEAD is now at {}", &commit_hash[..12.min(commit_hash.len())]);
+    println!("{} HEAD is now at {}", c.cyan("●"), c.yellow(&commit_hash[..12.min(commit_hash.len())]));
 
     Ok(())
 }

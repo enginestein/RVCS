@@ -60,6 +60,18 @@ pub enum RvcsError {
     #[error("Cannot find a common ancestor to merge")]
     NoCommonAncestor,
 
+    #[error("Tag '{0}' not found")]
+    TagNotFound(String),
+
+    #[error("Tag '{0}' already exists")]
+    TagExists(String),
+
+    #[error("Stash '{0}' not found")]
+    StashNotFound(String),
+
+    #[error("No stashes to pop")]
+    NoStashes,
+
     #[error("{0}")]
     Other(String),
 }

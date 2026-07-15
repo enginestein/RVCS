@@ -1,15 +1,17 @@
 use crate::core::repository::Repository;
 use crate::error::Result;
+use crate::utils::color::Color;
 use std::path::Path;
 
 pub fn execute(repo_path: &Path, name: &str) -> Result<()> {
     let mut repo = Repository::open(repo_path)?;
     let old_branch = repo.get_current_branch().unwrap_or_default();
+    let c = Color::new();
 
     repo.switch_branch(name)?;
 
     let new_branch = repo.get_current_branch().unwrap_or_default();
-    println!("Switched from '{}' to '{}'", old_branch, new_branch);
+    println!("{} Switched from '{}' to '{}'", c.green("✓"), c.red(&old_branch), c.green(&new_branch));
 
     Ok(())
 }

@@ -1,5 +1,6 @@
 use crate::core::repository::Repository;
 use crate::error::Result;
+use crate::utils::color::Color;
 use std::path::Path;
 
 pub fn create(repo_path: &Path, name: &str) -> Result<()> {
@@ -12,15 +13,16 @@ pub fn create(repo_path: &Path, name: &str) -> Result<()> {
 pub fn list(repo_path: &Path) -> Result<()> {
     let repo = Repository::open(repo_path)?;
     let branches = repo.list_branches()?;
+    let c = Color::new();
 
     if branches.is_empty() {
-        println!("No branches yet");
+        println!("{}", c.yellow("No branches yet"));
         return Ok(());
     }
 
     for (name, is_current) in &branches {
         if *is_current {
-            println!("* {}", name);
+            println!("* {} {}", c.green("●"), c.bold(&c.green(name)));
         } else {
             println!("  {}", name);
         }

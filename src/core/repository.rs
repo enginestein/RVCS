@@ -481,7 +481,7 @@ impl Repository {
         Ok(())
     }
 
-    fn collect_blobs_from_tree(&self, tree_hash: &str, prefix: &Path) -> Result<Vec<(PathBuf, String)>> {
+    pub fn collect_blobs_from_tree(&self, tree_hash: &str, prefix: &Path) -> Result<Vec<(PathBuf, String)>> {
         let obj = self.load_object(tree_hash)?;
         let tree = Tree::from_object(&obj)?;
         let mut result = Vec::new();
@@ -502,7 +502,7 @@ impl Repository {
         Ok(result)
     }
 
-    fn revert_all_at_commit(&self, commit: &Commit) -> Result<()> {
+    pub fn revert_all_at_commit(&self, commit: &Commit) -> Result<()> {
         let blobs = self.collect_blobs_from_tree(&commit.tree_hash, Path::new(""))?;
 
         for file in self.get_working_tree_files()? {

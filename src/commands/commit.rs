@@ -1,5 +1,6 @@
 use crate::core::repository::Repository;
 use crate::error::Result;
+use crate::utils::color::Color;
 use std::path::Path;
 
 pub fn execute(repo_path: &Path, author: &str, message: &str) -> Result<()> {
@@ -7,8 +8,8 @@ pub fn execute(repo_path: &Path, author: &str, message: &str) -> Result<()> {
     let file_count = repo.index.entries.len();
     let commit = repo.commit_staged(author, message)?;
     let branch = repo.get_current_branch().unwrap_or_else(|| "HEAD".to_string());
-    println!("[{} {}] {}", branch, &commit.hash[..12], message);
-    println!(" {} file(s) committed", file_count);
+    let c = Color::new();
+    println!("[{} {}] {} ({} file(s))", c.bold(&c.cyan(&branch)), c.yellow(&commit.hash[..12]), c.green(message), file_count);
     Ok(())
 }
 

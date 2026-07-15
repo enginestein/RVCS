@@ -1,12 +1,13 @@
 use crate::core::repository::Repository;
 use crate::error::Result;
+use crate::utils::color::Color;
 use std::path::Path;
 
 pub fn execute(repo_path: &Path, files: &[String]) -> Result<()> {
     let mut repo = Repository::open(repo_path)?;
+    let c = Color::new();
 
     if files.is_empty() {
-        // Add all untracked/modified files in working directory
         let working_files = repo.get_working_tree_files()?;
         for file in working_files {
             match repo.get_file_status(&file) {
@@ -14,7 +15,7 @@ pub fn execute(repo_path: &Path, files: &[String]) -> Result<()> {
                     use crate::core::repository::FileStatus;
                     if matches!(status, FileStatus::New | FileStatus::Modified) {
                         repo.add_file(&file)?;
-                        println!("  added: {}", file.display());
+                        println!("  {} {}", c.green("●"), file.display());
                     }
                 }
                 Err(_) => {}
@@ -24,7 +25,7 @@ pub fn execute(repo_path: &Path, files: &[String]) -> Result<()> {
         for file in files {
             let path = Path::new(file);
             repo.add_file(path)?;
-            println!("  added: {}", file);
+            println!("  {} {}", c.green("●"), file);
         }
     }
 

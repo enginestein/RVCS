@@ -1,10 +1,12 @@
 use crate::core::repository::Repository;
 use crate::error::Result;
+use crate::utils::color::Color;
 use std::path::Path;
 
 pub fn execute(path: &Path) -> Result<()> {
-    let repo = Repository::init(path)?;
-    println!("Initialized empty rvcs repository in {}", repo.rvcs_dir.display());
+    Repository::init(path)?;
+    let c = Color::new();
+    println!("{} Initialized empty rvcs repository at {}", c.green("✓"), c.bold(&path.display().to_string()));
     Ok(())
 }
 

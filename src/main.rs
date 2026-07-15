@@ -4,7 +4,7 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "rvcs")]
 #[command(about = "A locally running CLI-first Version Control System")]
-#[command(version = "0.2.0")]
+#[command(version = "0.3.0")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -83,6 +83,33 @@ enum Commands {
         #[arg(help = "Branch name to switch to")]
         name: String,
     },
+
+    #[command(about = "Remove files from the working tree and/or staging area")]
+    Rm {
+        #[arg(help = "Files to remove")]
+        files: Vec<String>,
+
+        #[arg(long, help = "Only remove from staging, keep working tree file")]
+        staged: bool,
+    },
+
+    #[command(about = "Create, list, or delete tags")]
+    Tag {
+        #[command(subcommand)]
+        action: TagAction,
+    },
+
+    #[command(about = "Stash changes away")]
+    Stash {
+        #[command(subcommand)]
+        action: StashAction,
+    },
+
+    #[command(about = "Merge a branch into the current HEAD")]
+    Merge {
+        #[arg(help = "Branch name to merge from")]
+        branch: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -99,6 +126,45 @@ enum BranchAction {
     #[command(about = "Delete a branch")]
     Delete {
         #[arg(help = "Branch name to delete")]
+        name: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum TagAction {
+    #[command(about = "Create a new tag")]
+    Create {
+        #[arg(help = "Tag name")]
+        name: String,
+
+        #[arg(help = "Commit hash or branch to tag (default: HEAD)")]
+        target: Option<String>,
+    },
+
+    #[command(about = "List all tags")]
+    List,
+
+    #[command(about = "Delete a tag")]
+    Delete {
+        #[arg(help = "Tag name to delete")]
+        name: String,
+    },
+}
+
+#[derive(Subcommand)]
+enum StashAction {
+    #[command(about = "Push changes onto the stash")]
+    Push,
+
+    #[command(about = "List stashes")]
+    List,
+
+    #[command(about = "Pop and restore the latest stash")]
+    Pop,
+
+    #[command(about = "Drop a specific stash")]
+    Drop {
+        #[arg(help = "Stash name to drop (e.g. stash@{0})")]
         name: String,
     },
 }
@@ -164,6 +230,37 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         },
         Commands::Switch { name } => {
             rvcs::commands::switch::execute(&cwd, &name)?;
+        }
+        Commands::Rm { files, staged } => {
+            rvcs::commands::rm::execute(&cwd, &files, staged)?;
+        }
+        Commands::Tag { action } => match action {
+            TagAction::Create { name, target } => {
+                rvcs::commands::tag::create(&cwd, &name, target.as_deref())?;
+            }
+            TagAction::List => {
+                rvcs::commands::tag::list(&cwd)?;
+            }
+            TagAction::Delete { name } => {
+                rvcs::commands::tag::delete(&cwd, &name)?;
+            }
+        },
+        Commands::Stash { action } => match action {
+            StashAction::Push => {
+                rvcs::commands::stash::push(&cwd)?;
+            }
+            StashAction::List => {
+                rvcs::commands::stash::list(&cwd)?;
+            }
+            StashAction::Pop => {
+                rvcs::commands::stash::pop(&cwd)?;
+            }
+            StashAction::Drop { name } => {
+                rvcs::commands::stash::drop_stash(&cwd, &name)?;
+            }
+        },
+        Commands::Merge { branch } => {
+            rvcs::commands::merge::execute(&cwd, &branch)?;
         }
     }
 

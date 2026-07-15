@@ -1,21 +1,23 @@
 use crate::core::repository::Repository;
 use crate::error::Result;
+use crate::utils::color::Color;
 use std::path::Path;
 
 pub fn execute(repo_path: &Path, files: &[String], from_branch: Option<&str>) -> Result<()> {
     let mut repo = Repository::open(repo_path)?;
+    let c = Color::new();
 
     if let Some(branch) = from_branch {
         repo.revert_from_branch(branch)?;
-        println!("Restored all files from branch '{}'", branch);
+        println!("{} Restored all files from branch '{}'", c.green("✓"), branch);
     } else if files.is_empty() {
         repo.revert_all()?;
-        println!("Reverted all files to last commit");
+        println!("{} Reverted all files to last commit", c.green("✓"));
     } else {
         for file in files {
             let path = Path::new(file);
             repo.revert_file(path)?;
-            println!("Reverted: {}", file);
+            println!("{} Reverted: {}", c.green("✓"), file);
         }
     }
 

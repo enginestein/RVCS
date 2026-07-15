@@ -1,18 +1,32 @@
 use crate::core::repository::Repository;
 use crate::error::Result;
+use crate::utils::color::Color;
 use std::path::Path;
 
 pub fn execute(repo_path: &Path) -> Result<()> {
     let repo = Repository::open(repo_path)?;
     let history = repo.get_commit_history()?;
+    let c = Color::new();
 
     if history.is_empty() {
-        println!("No commits yet");
+        println!("{}", c.yellow("No commits yet"));
         return Ok(());
     }
 
-    for commit in &history {
-        print!("{}", commit);
+    for (i, commit) in history.iter().enumerate() {
+        if i > 0 {
+            println!("{}", c.yellow("│"));
+            println!("{}", c.yellow("├─▶"));
+            println!("{}", c.yellow("│"));
+        }
+        println!("{} {}", c.bold(&c.cyan("commit")), c.yellow(&commit.hash[..12]));
+        println!("  {} {}", c.bold("Author:"), c.green(&commit.author));
+        println!("  {} {}", c.bold("Date:"), commit.timestamp.format("%Y-%m-%d %H:%M:%S UTC"));
+        println!();
+        for line in commit.message.lines() {
+            println!("     {}", c.bold(line));
+        }
+        println!();
     }
 
     Ok(())

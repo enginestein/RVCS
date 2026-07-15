@@ -1,16 +1,18 @@
 use crate::core::repository::Repository;
 use crate::error::Result;
+use crate::utils::color::Color;
 use std::path::Path;
 
 pub fn execute(repo_path: &Path, target: &str, hard: bool) -> Result<()> {
     let mut repo = Repository::open(repo_path)?;
+    let c = Color::new();
 
     if hard {
         repo.reset_hard(target)?;
-        println!("HEAD is now at {} (hard reset)", target);
+        println!("{} HEAD is now at {} {}", c.red("★"), c.yellow(target), c.red("(hard reset)"));
     } else {
         repo.reset_soft(target)?;
-        println!("HEAD is now at {} (soft reset)", target);
+        println!("{} HEAD is now at {} {}", c.cyan("★"), c.yellow(target), c.cyan("(soft reset)"));
     }
 
     Ok(())
