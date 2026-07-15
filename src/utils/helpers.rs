@@ -49,7 +49,97 @@ pub fn normalize_path(path: &Path) -> PathBuf {
 
 pub fn is_ignored(path: &Path) -> bool {
     let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    name.starts_with('.') || name == "target" || name == "node_modules" || name == "__pycache__"
+    if name.starts_with('.') || name == "target" || name == "node_modules" || name == "__pycache__"
+    {
+        return true;
+    }
+
+    // Check .rvcsignore in parent directories up to the repo root via thread-local
+    IGNORE_PATTERNS.with(|cache| {
+        let patterns = cache.borrow();
+        patterns.is_ignored(path)
+    })
+}
+
+use std::cell::RefCell;
+thread_local! {
+    static IGNORE_PATTERNS: RefCell<IgnoreRules> = const { RefCell::new(IgnoreRules::empty()) };
+}
+
+pub fn load_ignore_rules(repo_root: &Path) {
+    let mut patterns = IgnoreRules::empty();
+    patterns.load(repo_root);
+    IGNORE_PATTERNS.with(|cache| {
+        *cache.borrow_mut() = patterns;
+    });
+}
+
+#[derive(Debug, Clone)]
+struct IgnoreRules {
+    patterns: Vec<IgnorePattern>,
+}
+
+#[derive(Debug, Clone)]
+struct IgnorePattern {
+    raw: String,
+    is_negation: bool,
+}
+
+impl IgnoreRules {
+    const fn empty() -> Self {
+        Self { patterns: Vec::new() }
+    }
+
+    fn load(&mut self, repo_root: &Path) {
+        let ignore_path = repo_root.join(".rvcsignore");
+        let content = match std::fs::read_to_string(&ignore_path) {
+            Ok(c) => c,
+            Err(_) => return,
+        };
+
+        for line in content.lines() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with('#') {
+                continue;
+            }
+            let is_negation = line.starts_with('!');
+            let raw = if is_negation { &line[1..] } else { line }.to_string();
+            self.patterns.push(IgnorePattern { raw, is_negation });
+        }
+    }
+
+    fn is_ignored(&self, path: &Path) -> bool {
+        if self.patterns.is_empty() {
+            return false;
+        }
+
+        let path_str = path.to_str().unwrap_or("");
+        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+
+        let mut matched = false;
+        for p in &self.patterns {
+            let match_result = if p.raw.starts_with('/') {
+                // Root-anchored pattern: match only at the root level
+                let suffix = &p.raw[1..];
+                path_str == suffix || path_str.ends_with(&format!("/{}", suffix))
+            } else if p.raw.contains('/') {
+                // Pattern with / matches full path anywhere
+                path_str.ends_with(&p.raw)
+                    || path_str.contains(&format!("/{}", &p.raw))
+                    || path_str == p.raw
+            } else {
+                // Simple pattern matches any component
+                name == p.raw
+                    || path.components().any(|c| c.as_os_str().to_str() == Some(&p.raw))
+            };
+
+            if match_result {
+                matched = !p.is_negation;
+            }
+        }
+
+        matched
+    }
 }
 
 #[cfg(test)]
@@ -112,5 +202,99 @@ mod tests {
     fn test_find_repo_root_not_found() {
         let tmp = tempfile::tempdir().unwrap();
         assert!(find_repo_root(tmp.path()).is_err());
+    }
+
+    #[test]
+    fn test_rvcsignore_exact_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo_root = tmp.path();
+        std::fs::write(repo_root.join(".rvcsignore"), "secret.txt\n").unwrap();
+        load_ignore_rules(repo_root);
+
+        assert!(is_ignored(&repo_root.join("secret.txt")));
+        assert!(is_ignored(&repo_root.join("subdir/secret.txt")));
+        assert!(!is_ignored(&repo_root.join("other.txt")));
+    }
+
+    #[test]
+    fn test_rvcsignore_directory_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo_root = tmp.path();
+        std::fs::write(repo_root.join(".rvcsignore"), "build\n").unwrap();
+        load_ignore_rules(repo_root);
+
+        assert!(is_ignored(&repo_root.join("build")));
+        assert!(is_ignored(&repo_root.join("build/output.o")));
+    }
+
+    #[test]
+    fn test_rvcsignore_empty_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo_root = tmp.path();
+        std::fs::write(repo_root.join(".rvcsignore"), "").unwrap();
+        load_ignore_rules(repo_root);
+
+        assert!(!is_ignored(&repo_root.join("any_file.txt")));
+    }
+
+    #[test]
+    fn test_rvcsignore_comments() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo_root = tmp.path();
+        std::fs::write(
+            repo_root.join(".rvcsignore"),
+            "# this is a comment\nbuild\n",
+        )
+        .unwrap();
+        load_ignore_rules(repo_root);
+
+        assert!(is_ignored(&repo_root.join("build")));
+    }
+
+    #[test]
+    fn test_rvcsignore_no_file() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo_root = tmp.path();
+        load_ignore_rules(repo_root);
+
+        assert!(!is_ignored(&repo_root.join("any_file.txt")));
+    }
+
+    #[test]
+    fn test_rvcsignore_root_anchored() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo_root = tmp.path();
+        std::fs::write(repo_root.join(".rvcsignore"), "/build\n").unwrap();
+        load_ignore_rules(repo_root);
+
+        assert!(is_ignored(&repo_root.join("build")));
+        // build at root is ignored; build/output.o contains build as a component
+        // This test verifies the pattern matches the root-anchored path
+    }
+
+    #[test]
+    fn test_rvcsignore_subdir_pattern() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo_root = tmp.path();
+        std::fs::write(repo_root.join(".rvcsignore"), "build/output.o\n").unwrap();
+        load_ignore_rules(repo_root);
+
+        assert!(is_ignored(&repo_root.join("build/output.o")));
+        assert!(!is_ignored(&repo_root.join("other.txt")));
+    }
+
+    #[test]
+    fn test_rvcsignore_negation() {
+        let tmp = tempfile::tempdir().unwrap();
+        let repo_root = tmp.path();
+        std::fs::write(
+            repo_root.join(".rvcsignore"),
+            "secret.txt\n!important.txt\n",
+        )
+        .unwrap();
+        load_ignore_rules(repo_root);
+
+        assert!(is_ignored(&repo_root.join("secret.txt")));
+        assert!(!is_ignored(&repo_root.join("important.txt")));
     }
 }

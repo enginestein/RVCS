@@ -1,7 +1,7 @@
 # RVCS — A Locally Running CLI-First Version Control System
 
 [![Build Status](https://img.shields.io/badge/build-passing-brightgreen)]()
-[![Tests](https://img.shields.io/badge/tests-151%20passing-brightgreen)]()
+[![Tests](https://img.shields.io/badge/tests-191%20passing-brightgreen)]()
 [![License](https://img.shields.io/badge/license-MIT-blue)]()
 [![Rust](https://img.shields.io/badge/rust-1.70%2B-orange)]()
 
@@ -55,7 +55,11 @@
 | **Safe experimentation** | Snapshot working state, make risky changes, restore instantly |
 | **Checkout commits/branches** | Jump to any point in history |
 | **Zero dependencies at runtime** | Single binary, no daemon, no server |
-| **Comprehensive test suite** | 151 tests (131 unit + 20 integration) |
+| **Comprehensive test suite** | 191 tests (167 unit + 24 integration) |
+| **Nested directory trees** | Recursive tree objects for accurate directory structure |
+| **.rvcsignore** | Custom ignore patterns via `.rvcsignore` file |
+| **diff --cached** | Show staged changes vs last commit |
+| **Reset (soft/hard)** | Move HEAD without (soft) or with (hard) working tree changes |
 
 ---
 
@@ -175,6 +179,9 @@ rvcs revert --from safe      # Restore ALL from 'safe' branch
 | `rvcs status` | Show working tree status | `rvcs status` |
 | `rvcs log` | Show commit history | `rvcs log` |
 | `rvcs diff [file]` | Show line-level diffs | `rvcs diff src/main.rs` |
+| `rvcs diff --cached [file]` | Show staged changes | `rvcs diff --cached` |
+| `rvcs reset <target>` | Soft reset (move HEAD only) | `rvcs reset abc123` |
+| `rvcs reset --hard <target>` | Hard reset (restore working tree) | `rvcs reset --hard abc123` |
 | `rvcs revert [files...]` | Revert to last commit | `rvcs revert main.rs` |
 | `rvcs revert --from <branch>` | Restore from branch | `rvcs revert --from safe` |
 | `rvcs checkout <hash\|branch>` | Checkout commit or branch | `rvcs checkout abc123` |

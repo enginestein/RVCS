@@ -2,8 +2,12 @@ use crate::core::repository::{DiffLineType, Repository};
 use crate::error::Result;
 use std::path::Path;
 
-pub fn execute(repo_path: &Path, file_path: Option<&str>) -> Result<()> {
+pub fn execute(repo_path: &Path, file_path: Option<&str>, cached: bool) -> Result<()> {
     let repo = Repository::open(repo_path)?;
+
+    if cached {
+        return show_cached_diff(&repo, file_path);
+    }
 
     if let Some(path) = file_path {
         show_file_diff(&repo, Path::new(path))?;
@@ -28,6 +32,29 @@ pub fn execute(repo_path: &Path, file_path: Option<&str>) -> Result<()> {
     Ok(())
 }
 
+fn show_cached_diff(repo: &Repository, file_path: Option<&str>) -> Result<()> {
+    if let Some(path) = file_path {
+        let diff = repo.compute_cached_diff(Path::new(path))?;
+        if diff.additions == 0 && diff.deletions == 0 {
+            println!("No changes staged for {}", path);
+            return Ok(());
+        }
+        print_cached_diff_header(Path::new(path));
+        print_diff_lines(&diff);
+    } else {
+        let diffs = repo.compute_cached_diff_for_index()?;
+        if diffs.is_empty() {
+            println!("No changes staged for commit");
+            return Ok(());
+        }
+        for (path, diff) in &diffs {
+            print_cached_diff_header(path);
+            print_diff_lines(diff);
+        }
+    }
+    Ok(())
+}
+
 fn show_file_diff(repo: &Repository, path: &Path) -> Result<()> {
     let diff = repo.compute_diff(path)?;
 
@@ -43,6 +70,10 @@ fn show_file_diff(repo: &Repository, path: &Path) -> Result<()> {
 
 fn print_file_diff_header(path: &Path) {
     println!("diff --rvcs/{}", path.display());
+}
+
+fn print_cached_diff_header(path: &Path) {
+    println!("diff --cached --rvcs/{}", path.display());
 }
 
 fn print_diff_lines(diff: &crate::core::repository::DiffResult) {
@@ -87,7 +118,7 @@ mod tests {
     #[test]
     fn test_diff_no_changes() {
         let (_tmp, path) = setup();
-        let result = execute(&path, None);
+        let result = execute(&path, None, false);
         assert!(result.is_ok());
     }
 
@@ -99,7 +130,7 @@ mod tests {
         commit::execute(&path, "Author", "initial").unwrap();
 
         fs::write(path.join("file.txt"), "line1\nmodified\n").unwrap();
-        let result = execute(&path, Some("file.txt"));
+        let result = execute(&path, Some("file.txt"), false);
         assert!(result.is_ok());
     }
 
@@ -107,7 +138,7 @@ mod tests {
     fn test_diff_new_file() {
         let (_tmp, path) = setup();
         fs::write(path.join("file.txt"), "content").unwrap();
-        let result = execute(&path, Some("file.txt"));
+        let result = execute(&path, Some("file.txt"), false);
         assert!(result.is_ok());
     }
 
@@ -121,7 +152,7 @@ mod tests {
         fs::write(path.join("a.txt"), "modified").unwrap();
         fs::write(path.join("b.txt"), "new").unwrap();
 
-        let result = execute(&path, Some("a.txt"));
+        let result = execute(&path, Some("a.txt"), false);
         assert!(result.is_ok());
     }
 
@@ -129,7 +160,42 @@ mod tests {
     fn test_diff_untracked_file() {
         let (_tmp, path) = setup();
         fs::write(path.join("new.txt"), "brand new").unwrap();
-        let result = execute(&path, Some("new.txt"));
+        let result = execute(&path, Some("new.txt"), false);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_diff_cached_no_change() {
+        let (_tmp, path) = setup();
+        let result = execute(&path, None, true);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_diff_cached_staged_change() {
+        let (_tmp, path) = setup();
+        fs::write(path.join("file.txt"), "original").unwrap();
+        add::execute(&path, &vec!["file.txt".to_string()]).unwrap();
+        commit::execute(&path, "Author", "init").unwrap();
+
+        fs::write(path.join("file.txt"), "staged change").unwrap();
+        add::execute(&path, &vec!["file.txt".to_string()]).unwrap();
+
+        let result = execute(&path, Some("file.txt"), true);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_diff_cached_specific_file() {
+        let (_tmp, path) = setup();
+        fs::write(path.join("a.txt"), "original a").unwrap();
+        add::execute(&path, &vec!["a.txt".to_string()]).unwrap();
+        commit::execute(&path, "Author", "init").unwrap();
+
+        fs::write(path.join("a.txt"), "staged a").unwrap();
+        add::execute(&path, &vec!["a.txt".to_string()]).unwrap();
+
+        let result = execute(&path, Some("a.txt"), true);
         assert!(result.is_ok());
     }
 }

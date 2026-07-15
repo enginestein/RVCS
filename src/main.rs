@@ -4,7 +4,7 @@ use std::path::PathBuf;
 #[derive(Parser)]
 #[command(name = "rvcs")]
 #[command(about = "A locally running CLI-first Version Control System")]
-#[command(version = "0.1.0")]
+#[command(version = "0.2.0")]
 struct Cli {
     #[command(subcommand)]
     command: Commands,
@@ -43,6 +43,18 @@ enum Commands {
     Diff {
         #[arg(help = "Specific file to diff")]
         file: Option<String>,
+
+        #[arg(long, help = "Show changes staged for commit (vs last commit)")]
+        cached: bool,
+    },
+
+    #[command(about = "Reset HEAD to a specific state")]
+    Reset {
+        #[arg(help = "Commit hash or branch name to reset to")]
+        target: String,
+
+        #[arg(long, help = "Reset index and working tree (discards changes)")]
+        hard: bool,
     },
 
     #[command(about = "Revert working tree changes")]
@@ -116,8 +128,11 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         Commands::Log => {
             rvcs::commands::log::execute(&cwd)?;
         }
-        Commands::Diff { file } => {
-            rvcs::commands::diff::execute(&cwd, file.as_deref())?;
+        Commands::Diff { file, cached } => {
+            rvcs::commands::diff::execute(&cwd, file.as_deref(), cached)?;
+        }
+        Commands::Reset { target, hard } => {
+            rvcs::commands::reset::execute(&cwd, &target, hard)?;
         }
         Commands::Revert { files, from } => {
             rvcs::commands::revert::execute(&cwd, &files, from.as_deref())?;

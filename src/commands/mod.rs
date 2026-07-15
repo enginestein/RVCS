@@ -5,6 +5,7 @@ pub mod commit;
 pub mod diff;
 pub mod init;
 pub mod log;
+pub mod reset;
 pub mod revert;
 pub mod status;
 pub mod switch;

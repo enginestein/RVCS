@@ -43,6 +43,8 @@ impl Repository {
         let rvcs_dir = root.join(".rvcs");
         let index = Index::load(&root)?;
 
+        crate::utils::helpers::load_ignore_rules(&root);
+
         Ok(Self {
             root,
             rvcs_dir,
@@ -126,16 +128,76 @@ impl Repository {
     }
 
     pub fn build_tree(&self) -> Result<Tree> {
-        let mut entries: Vec<TreeEntry> = self
-            .index
-            .entries_sorted()
-            .into_iter()
-            .map(|(_, entry)| TreeEntry {
-                name: entry.path.file_name().unwrap().to_str().unwrap().to_string(),
-                hash: entry.hash.clone(),
-                entry_type: TreeEntryType::Blob,
-            })
-            .collect();
+        // Group index entries by their immediate parent directory
+        let mut dir_entries: std::collections::HashMap<String, Vec<TreeEntry>> =
+            std::collections::HashMap::new();
+
+        for (path, entry) in self.index.entries_sorted() {
+            let components: Vec<_> = path.components().collect();
+            let (parent_dir, file_name) = if components.len() <= 1 {
+                ("".to_string(), path.to_str().unwrap().to_string())
+            } else {
+                let parent: PathBuf = components[..components.len() - 1].iter().collect();
+                let name = components.last().unwrap().as_os_str().to_str().unwrap().to_string();
+                (parent.to_str().unwrap().to_string(), name)
+            };
+
+            dir_entries
+                .entry(parent_dir)
+                .or_default()
+                .push(TreeEntry {
+                    name: file_name,
+                    hash: entry.hash.clone(),
+                    entry_type: TreeEntryType::Blob,
+                });
+        }
+
+        self.build_recursive_tree(&Path::new(""), &dir_entries)
+    }
+
+    fn build_recursive_tree(
+        &self,
+        dir: &Path,
+        dir_entries: &std::collections::HashMap<String, Vec<TreeEntry>>,
+    ) -> Result<Tree> {
+        let dir_key = if dir == Path::new("") {
+            "".to_string()
+        } else {
+            dir.to_str().unwrap().to_string()
+        };
+
+        let mut entries = dir_entries.get(&dir_key).cloned().unwrap_or_default();
+        let dir_prefix = if dir_key.is_empty() {
+            String::new()
+        } else {
+            format!("{}/", dir_key)
+        };
+
+        // Find subdirectories
+        let mut subdirs = std::collections::BTreeSet::new();
+        for key in dir_entries.keys() {
+            if key.is_empty() || key == &dir_key {
+                continue;
+            }
+            if let Some(relative) = key.strip_prefix(&dir_prefix) {
+                if let Some(subdir) = relative.split('/').next() {
+                    if !subdir.is_empty() {
+                        subdirs.insert(subdir.to_string());
+                    }
+                }
+            }
+        }
+
+        for subdir in subdirs {
+            let child_path = Path::new(&dir_prefix).join(&subdir);
+            let child_tree = self.build_recursive_tree(&child_path, dir_entries)?;
+            self.store_object(&child_tree.to_object())?;
+            entries.push(TreeEntry {
+                name: subdir,
+                hash: child_tree.hash.clone(),
+                entry_type: TreeEntryType::Tree,
+            });
+        }
 
         entries.sort_by(|a, b| a.name.cmp(&b.name));
         Ok(Tree::new(entries))
@@ -221,16 +283,41 @@ impl Repository {
         Ok(commits)
     }
 
-    pub fn get_file_content_at_commit(&self, commit: &Commit, path: &Path) -> Result<Vec<u8>> {
-        let tree_obj = self.load_object(&commit.tree_hash)?;
-        let tree = Tree::from_object(&tree_obj)?;
+    pub fn get_tree_entry_at_path(&self, tree_hash: &str, path: &Path) -> Result<TreeEntry> {
+        let components: Vec<_> = path.components().collect();
+        if components.is_empty() {
+            return Err(RvcsError::FileNotFound(path.to_path_buf()));
+        }
 
-        let file_name = path.file_name().unwrap().to_str().unwrap();
+        let obj = self.load_object(tree_hash)?;
+        let tree = Tree::from_object(&obj)?;
+
+        let name = components[0].as_os_str().to_str().unwrap();
         let entry = tree
             .entries
             .iter()
-            .find(|e| e.name == file_name)
+            .find(|e| e.name == name)
             .ok_or_else(|| RvcsError::FileNotFound(path.to_path_buf()))?;
+
+        if components.len() == 1 {
+            return Ok(entry.clone());
+        }
+
+        // Recurse into subtree
+        if entry.entry_type != TreeEntryType::Tree {
+            return Err(RvcsError::FileNotFound(path.to_path_buf()));
+        }
+
+        let remaining: PathBuf = components[1..].iter().collect();
+        self.get_tree_entry_at_path(&entry.hash, &remaining)
+    }
+
+    pub fn get_file_content_at_commit(&self, commit: &Commit, path: &Path) -> Result<Vec<u8>> {
+        let entry = self.get_tree_entry_at_path(&commit.tree_hash, path)?;
+
+        if entry.entry_type != TreeEntryType::Blob {
+            return Err(RvcsError::FileNotFound(path.to_path_buf()));
+        }
 
         let blob_obj = self.load_object(&entry.hash)?;
         let blob = Blob::from_object(&blob_obj)?;
@@ -309,6 +396,52 @@ impl Repository {
         Ok(compute_line_diff(&old_content, &current_content))
     }
 
+    pub fn compute_cached_diff(&self, path: &Path) -> Result<DiffResult> {
+        let staged_content = match self.index.get_entry(path) {
+            Some(entry) => {
+                let obj = self.load_object(&entry.hash)?;
+                let blob = Blob::from_object(&obj)?;
+                blob.content
+            }
+            None => Vec::new(),
+        };
+
+        let old_content = match self.get_head_commit() {
+            Ok(commit) => match self.get_file_content_at_commit(&commit, path) {
+                Ok(content) => content,
+                Err(_) => Vec::new(),
+            },
+            Err(_) => Vec::new(),
+        };
+
+        Ok(compute_line_diff(&old_content, &staged_content))
+    }
+
+    pub fn compute_cached_diff_for_index(&self) -> Result<Vec<(PathBuf, DiffResult)>> {
+        let mut results = Vec::new();
+        for (path, entry) in self.index.entries_sorted() {
+            let staged_content = {
+                let obj = self.load_object(&entry.hash)?;
+                let blob = Blob::from_object(&obj)?;
+                blob.content
+            };
+
+            let old_content = match self.get_head_commit() {
+                Ok(ref commit) => match self.get_file_content_at_commit(commit, path) {
+                    Ok(content) => content,
+                    Err(_) => Vec::new(),
+                },
+                Err(_) => Vec::new(),
+            };
+
+            let diff = compute_line_diff(&old_content, &staged_content);
+            if diff.additions > 0 || diff.deletions > 0 {
+                results.push((path.clone(), diff));
+            }
+        }
+        Ok(results)
+    }
+
     pub fn revert_file(&mut self, path: &Path) -> Result<()> {
         let commit = self.get_head_commit()?;
         let content = self.get_file_content_at_commit(&commit, path)?;
@@ -327,30 +460,7 @@ impl Repository {
 
     pub fn revert_all(&mut self) -> Result<()> {
         let commit = self.get_head_commit()?;
-        let tree_obj = self.load_object(&commit.tree_hash)?;
-        let tree = Tree::from_object(&tree_obj)?;
-
-        for entry in &tree.entries {
-            if entry.entry_type == TreeEntryType::Blob {
-                let blob_obj = self.load_object(&entry.hash)?;
-                let blob = Blob::from_object(&blob_obj)?;
-                let file_path = self.root.join(&entry.name);
-
-                if let Some(parent) = file_path.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-
-                fs::write(&file_path, &blob.content)?;
-            }
-        }
-
-        // Remove tracked files that no longer exist in the commit
-        for file in self.get_working_tree_files()? {
-            let in_tree = tree.entries.iter().any(|e| e.name == file.to_str().unwrap());
-            if !in_tree {
-                let _ = fs::remove_file(self.root.join(&file));
-            }
-        }
+        self.revert_all_at_commit(&commit)?;
 
         self.index.clear();
         self.save_index()?;
@@ -371,29 +481,47 @@ impl Repository {
         Ok(())
     }
 
+    fn collect_blobs_from_tree(&self, tree_hash: &str, prefix: &Path) -> Result<Vec<(PathBuf, String)>> {
+        let obj = self.load_object(tree_hash)?;
+        let tree = Tree::from_object(&obj)?;
+        let mut result = Vec::new();
+
+        for entry in &tree.entries {
+            let path = prefix.join(&entry.name);
+            match entry.entry_type {
+                TreeEntryType::Blob => {
+                    result.push((path, entry.hash.clone()));
+                }
+                TreeEntryType::Tree => {
+                    let sub = self.collect_blobs_from_tree(&entry.hash, &path)?;
+                    result.extend(sub);
+                }
+            }
+        }
+
+        Ok(result)
+    }
+
     fn revert_all_at_commit(&self, commit: &Commit) -> Result<()> {
-        let tree_obj = self.load_object(&commit.tree_hash)?;
-        let tree = Tree::from_object(&tree_obj)?;
+        let blobs = self.collect_blobs_from_tree(&commit.tree_hash, Path::new(""))?;
 
         for file in self.get_working_tree_files()? {
-            let in_tree = tree.entries.iter().any(|e| e.name == file.to_str().unwrap());
+            let in_tree = blobs.iter().any(|(p, _)| p == &file);
             if !in_tree {
                 let _ = fs::remove_file(self.root.join(&file));
             }
         }
 
-        for entry in &tree.entries {
-            if entry.entry_type == TreeEntryType::Blob {
-                let blob_obj = self.load_object(&entry.hash)?;
-                let blob = Blob::from_object(&blob_obj)?;
-                let file_path = self.root.join(&entry.name);
+        for (path, blob_hash) in &blobs {
+            let blob_obj = self.load_object(blob_hash)?;
+            let blob = Blob::from_object(&blob_obj)?;
+            let file_path = self.root.join(path);
 
-                if let Some(parent) = file_path.parent() {
-                    fs::create_dir_all(parent)?;
-                }
-
-                fs::write(&file_path, &blob.content)?;
+            if let Some(parent) = file_path.parent() {
+                fs::create_dir_all(parent)?;
             }
+
+            fs::write(&file_path, &blob.content)?;
         }
 
         Ok(())
@@ -548,6 +676,34 @@ impl Repository {
         self.index.clear();
         self.save_index()?;
 
+        Ok(())
+    }
+
+    pub fn reset_soft(&mut self, target: &str) -> Result<()> {
+        let commit_hash = self.resolve_ref(target)?;
+        // Verify the commit exists
+        let obj = self.load_object(&commit_hash)?;
+        let _commit = Commit::from_object(&obj)?;
+
+        // Move HEAD without touching index or working tree
+        self.update_head(&commit_hash)?;
+        Ok(())
+    }
+
+    pub fn reset_hard(&mut self, target: &str) -> Result<()> {
+        let commit_hash = self.resolve_ref(target)?;
+        let obj = self.load_object(&commit_hash)?;
+        let commit = Commit::from_object(&obj)?;
+
+        // Restore working tree to the target commit
+        self.revert_all_at_commit(&commit)?;
+
+        // Clear index
+        self.index.clear();
+        self.save_index()?;
+
+        // Move HEAD
+        self.update_head(&commit_hash)?;
         Ok(())
     }
 }
@@ -936,5 +1092,145 @@ mod tests {
         fs::remove_file(path.join("file.txt")).unwrap();
         let status = repo.get_file_status(Path::new("file.txt")).unwrap();
         assert_eq!(status, FileStatus::Deleted);
+    }
+
+    #[test]
+    fn test_remove_from_staging() {
+        let (_tmp, path, mut repo) = setup_repo();
+        create_file(&path, "keep.txt", "keep");
+        create_file(&path, "remove.txt", "remove");
+        repo.add_file(Path::new("keep.txt")).unwrap();
+        repo.add_file(Path::new("remove.txt")).unwrap();
+        assert_eq!(repo.index.entries.len(), 2);
+
+        repo.remove_from_staging(Path::new("remove.txt"));
+        assert_eq!(repo.index.entries.len(), 1);
+        assert!(repo.index.get_entry(Path::new("keep.txt")).is_some());
+        assert!(repo.index.get_entry(Path::new("remove.txt")).is_none());
+    }
+
+    #[test]
+    fn test_get_head_hash_detached() {
+        let (_tmp, path, mut repo) = setup_repo();
+        create_file(&path, "file.txt", "some content");
+        repo.add_file(Path::new("file.txt")).unwrap();
+        let c = repo.commit_staged("Author", "msg").unwrap();
+
+        fs::write(repo.rvcs_dir.join("HEAD"), format!("{}\n", c.hash)).unwrap();
+
+        let hash = repo.get_head_commit_hash().unwrap();
+        assert_eq!(hash, c.hash);
+    }
+
+    #[test]
+    fn test_get_current_branch() {
+        let (_tmp, path, mut repo) = setup_repo();
+        assert_eq!(repo.get_current_branch(), Some("main".to_string()));
+    }
+
+    #[test]
+    fn test_get_current_branch_detached() {
+        let (_tmp, path, mut repo) = setup_repo();
+        fs::write(repo.rvcs_dir.join("HEAD"), "abc123\n").unwrap();
+        assert_eq!(repo.get_current_branch(), None);
+    }
+
+    #[test]
+    fn test_resolve_branch_name() {
+        let (_tmp, path, mut repo) = setup_repo();
+        create_file(&path, "f.txt", "data");
+        repo.add_file(Path::new("f.txt")).unwrap();
+        let c = repo.commit_staged("Author", "msg").unwrap();
+        repo.create_branch("test-branch").unwrap();
+
+        assert_eq!(repo.resolve_ref("test-branch").unwrap(), c.hash);
+    }
+
+    #[test]
+    fn test_resolve_short_hash() {
+        let (_tmp, path, mut repo) = setup_repo();
+        create_file(&path, "f.txt", "data");
+        repo.add_file(Path::new("f.txt")).unwrap();
+        let c = repo.commit_staged("Author", "msg").unwrap();
+
+        let short: String = c.hash.chars().take(6).collect();
+        let resolved = repo.resolve_ref(&short).unwrap();
+        assert_eq!(resolved, c.hash);
+    }
+
+    #[test]
+    fn test_resolve_ref_not_found() {
+        let (_tmp, _path, repo) = setup_repo();
+        assert!(repo.resolve_ref("nope").is_err());
+    }
+
+    #[test]
+    fn test_build_nested_tree() {
+        let (_tmp, path, mut repo) = setup_repo();
+        create_file(&path, "a.txt", "a");
+        create_file(&path, "dir/b.txt", "b");
+        create_file(&path, "dir/sub/c.txt", "c");
+        create_file(&path, "d.txt", "d");
+        repo.add_file(Path::new("a.txt")).unwrap();
+        repo.add_file(Path::new("dir/b.txt")).unwrap();
+        repo.add_file(Path::new("dir/sub/c.txt")).unwrap();
+        repo.add_file(Path::new("d.txt")).unwrap();
+
+        let tree = repo.build_tree().unwrap();
+        assert_eq!(tree.entries.len(), 3);
+
+        let dir_entry = tree.entries.iter().find(|e| e.name == "dir").unwrap();
+        assert_eq!(dir_entry.entry_type, TreeEntryType::Tree);
+
+        let dir_tree = Tree::from_object(&repo.load_object(&dir_entry.hash).unwrap()).unwrap();
+        assert_eq!(dir_tree.entries.len(), 2);
+        let sub_entry = dir_tree.entries.iter().find(|e| e.name == "sub").unwrap();
+        assert_eq!(sub_entry.entry_type, TreeEntryType::Tree);
+
+        let sub_tree = Tree::from_object(&repo.load_object(&sub_entry.hash).unwrap()).unwrap();
+        assert_eq!(sub_tree.entries.len(), 1);
+        assert_eq!(sub_tree.entries[0].name, "c.txt");
+    }
+
+    #[test]
+    fn test_get_file_content_at_nested_path() {
+        let (_tmp, path, mut repo) = setup_repo();
+        create_file(&path, "a/b.txt", "nested content");
+        repo.add_file(Path::new("a/b.txt")).unwrap();
+        let commit = repo.commit_staged("Author", "msg").unwrap();
+
+        let content = repo.get_file_content_at_commit(&commit, Path::new("a/b.txt")).unwrap();
+        assert_eq!(content, b"nested content");
+    }
+
+    #[test]
+    fn test_reset_soft_does_not_clear_index() {
+        let (_tmp, path, mut repo) = setup_repo();
+        create_file(&path, "f.txt", "content");
+        repo.add_file(Path::new("f.txt")).unwrap();
+        let commit = repo.commit_staged("Author", "msg").unwrap();
+
+        create_file(&path, "g.txt", "staged");
+        repo.add_file(Path::new("g.txt")).unwrap();
+        assert_eq!(repo.index.entries.len(), 1);
+
+        repo.reset_soft(&commit.hash).unwrap();
+        assert_eq!(repo.index.entries.len(), 1);
+        let head = repo.get_head_commit_hash().unwrap();
+        assert_eq!(head, commit.hash);
+    }
+
+    #[test]
+    fn test_reset_hard_clears_index() {
+        let (_tmp, path, mut repo) = setup_repo();
+        create_file(&path, "f.txt", "content");
+        repo.add_file(Path::new("f.txt")).unwrap();
+        let commit = repo.commit_staged("Author", "msg").unwrap();
+
+        create_file(&path, "g.txt", "staged");
+        repo.add_file(Path::new("g.txt")).unwrap();
+
+        repo.reset_hard(&commit.hash).unwrap();
+        assert_eq!(repo.index.entries.len(), 0);
     }
 }

@@ -94,4 +94,46 @@ mod tests {
         let repo = Repository::open(&path).unwrap();
         assert!(repo.index.get_entry(Path::new("src/main.rs")).is_some());
     }
+
+    #[test]
+    fn test_add_absolute_path() {
+        let (_tmp, path) = setup();
+        let abs_path = path.join("absolute.txt");
+        fs::write(&abs_path, "absolute path file").unwrap();
+        execute(&path, &vec![abs_path.to_str().unwrap().to_string()]).unwrap();
+
+        let repo = Repository::open(&path).unwrap();
+        assert!(repo.index.get_entry(Path::new("absolute.txt")).is_some());
+    }
+
+    #[test]
+    fn test_add_all_files_respects_rvcsignore() {
+        let (_tmp, path) = setup();
+        fs::write(path.join(".rvcsignore"), "ignored.txt\n").unwrap();
+        fs::write(path.join("tracked.txt"), "track me").unwrap();
+        fs::write(path.join("ignored.txt"), "ignore me").unwrap();
+
+        execute(&path, &vec![]).unwrap();
+
+        let repo = Repository::open(&path).unwrap();
+        assert!(repo.index.get_entry(Path::new("tracked.txt")).is_some());
+        assert!(repo.index.get_entry(Path::new("ignored.txt")).is_none());
+    }
+
+    #[test]
+    fn test_add_after_modification_updates_hash() {
+        let (_tmp, path) = setup();
+        fs::write(path.join("file.txt"), "v1").unwrap();
+        execute(&path, &vec!["file.txt".to_string()]).unwrap();
+
+        let repo1 = Repository::open(&path).unwrap();
+        let hash_before = repo1.index.get_entry(Path::new("file.txt")).unwrap().hash.clone();
+
+        fs::write(path.join("file.txt"), "v2").unwrap();
+        execute(&path, &vec!["file.txt".to_string()]).unwrap();
+
+        let repo2 = Repository::open(&path).unwrap();
+        let hash_after = repo2.index.get_entry(Path::new("file.txt")).unwrap().hash.clone();
+        assert_ne!(hash_before, hash_after);
+    }
 }

@@ -52,7 +52,7 @@ fn test_full_workflow() {
 
     // Diff
     fs::write(path.join("src/main.rs"), "fn main() {\n    println!(\"changed\");\n}").unwrap();
-    let diff_result = rvcs::commands::diff::execute(path, Some("src/main.rs"));
+    let diff_result = rvcs::commands::diff::execute(path, Some("src/main.rs"), false);
     assert!(diff_result.is_ok());
 
     // Revert
@@ -146,13 +146,29 @@ fn test_directory_structure_preserved() {
         "Add project structure",
     );
 
-    // Verify all files in commit
+    // Verify all files in commit - tree now has nested structure
     let repo = rvcs::core::repository::Repository::open(path).unwrap();
     let commit = repo.get_head_commit().unwrap();
     let tree = rvcs::core::tree::Tree::from_object(
         &repo.load_object(&commit.tree_hash).unwrap()
     ).unwrap();
-    assert_eq!(tree.entries.len(), 3);
+    // Top-level: Cargo.toml + src/ directory
+    assert_eq!(tree.entries.len(), 2);
+
+    // Verify src/ has nested tree with main.rs and components/
+    let src_entry = tree.entries.iter().find(|e| e.name == "src").unwrap();
+    let src_tree = rvcs::core::tree::Tree::from_object(
+        &repo.load_object(&src_entry.hash).unwrap()
+    ).unwrap();
+    assert_eq!(src_tree.entries.len(), 2);
+
+    // Verify src/components/ has button.rs
+    let comp_entry = src_tree.entries.iter().find(|e| e.name == "components").unwrap();
+    let comp_tree = rvcs::core::tree::Tree::from_object(
+        &repo.load_object(&comp_entry.hash).unwrap()
+    ).unwrap();
+    assert_eq!(comp_tree.entries.len(), 1);
+    assert_eq!(comp_tree.entries[0].name, "button.rs");
 }
 
 #[test]
@@ -362,7 +378,7 @@ fn test_diff_no_changes_shows_nothing() {
     add_and_commit(path, &["file.txt"], "Author", "initial");
 
     // No changes made
-    let result = rvcs::commands::diff::execute(path, None);
+    let result = rvcs::commands::diff::execute(path, None, false);
     assert!(result.is_ok());
 }
 
@@ -404,4 +420,87 @@ fn test_revert_after_partial_add() {
 
     // b.txt should be unchanged
     assert_eq!(fs::read(path.join("b.txt")).unwrap(), b"b_v1");
+}
+
+#[test]
+fn test_reset_soft_preserves_working_tree() {
+    let tmp = setup();
+    let path = tmp.path();
+
+    fs::write(path.join("f.txt"), "v1").unwrap();
+    rvcs::commands::add::execute(path, &vec!["f.txt".to_string()]).unwrap();
+    rvcs::commands::commit::execute(path, "Author", "first").unwrap();
+
+    fs::write(path.join("f.txt"), "v2").unwrap();
+    rvcs::commands::add::execute(path, &vec!["f.txt".to_string()]).unwrap();
+    rvcs::commands::commit::execute(path, "Author", "second").unwrap();
+
+    let repo = rvcs::core::repository::Repository::open(path).unwrap();
+    let history = repo.get_commit_history().unwrap();
+    let first_hash = history.last().unwrap().hash.clone();
+
+    rvcs::commands::reset::execute(path, &first_hash, false).unwrap();
+
+    let content = fs::read(path.join("f.txt")).unwrap();
+    assert_eq!(content, b"v2");
+    let repo = rvcs::core::repository::Repository::open(path).unwrap();
+    let head = repo.get_head_commit().unwrap();
+    assert_eq!(head.hash, first_hash);
+}
+
+#[test]
+fn test_reset_hard_restores_tree() {
+    let tmp = setup();
+    let path = tmp.path();
+
+    fs::write(path.join("f.txt"), "v1").unwrap();
+    rvcs::commands::add::execute(path, &vec!["f.txt".to_string()]).unwrap();
+    rvcs::commands::commit::execute(path, "Author", "first").unwrap();
+
+    fs::write(path.join("f.txt"), "v2").unwrap();
+    rvcs::commands::add::execute(path, &vec!["f.txt".to_string()]).unwrap();
+    rvcs::commands::commit::execute(path, "Author", "second").unwrap();
+
+    let repo = rvcs::core::repository::Repository::open(path).unwrap();
+    let history = repo.get_commit_history().unwrap();
+    let first_hash = history.last().unwrap().hash.clone();
+
+    rvcs::commands::reset::execute(path, &first_hash, true).unwrap();
+
+    let content = fs::read(path.join("f.txt")).unwrap();
+    assert_eq!(content, b"v1");
+    let repo = rvcs::core::repository::Repository::open(path).unwrap();
+    assert!(repo.index.is_empty());
+}
+
+#[test]
+fn test_diff_cached_shows_staged_changes() {
+    let tmp = setup();
+    let path = tmp.path();
+
+    fs::write(path.join("f.txt"), "original").unwrap();
+    rvcs::commands::add::execute(path, &vec!["f.txt".to_string()]).unwrap();
+    rvcs::commands::commit::execute(path, "Author", "init").unwrap();
+
+    fs::write(path.join("f.txt"), "changed").unwrap();
+    rvcs::commands::add::execute(path, &vec!["f.txt".to_string()]).unwrap();
+
+    let result = rvcs::commands::diff::execute(path, Some("f.txt"), true);
+    assert!(result.is_ok());
+}
+
+#[test]
+fn test_rvcsignore_at_cli_level() {
+    let tmp = setup();
+    let path = tmp.path();
+
+    fs::write(path.join(".rvcsignore"), "ignore_me.txt\n").unwrap();
+    fs::write(path.join("track.txt"), "keep me").unwrap();
+    fs::write(path.join("ignore_me.txt"), "lose me").unwrap();
+
+    rvcs::commands::add::execute(path, &vec![]).unwrap();
+
+    let repo = rvcs::core::repository::Repository::open(path).unwrap();
+    assert!(repo.index.get_entry(Path::new("track.txt")).is_some());
+    assert!(repo.index.get_entry(Path::new("ignore_me.txt")).is_none());
 }

@@ -115,4 +115,38 @@ mod tests {
         let result = execute(&path);
         assert!(result.is_ok());
     }
+
+    #[test]
+    fn test_status_unchanged_after_add() {
+        let (_tmp, path) = setup();
+        fs::write(path.join("file.txt"), "content").unwrap();
+        add::execute(&path, &vec!["file.txt".to_string()]).unwrap();
+
+        let repo = crate::core::repository::Repository::open(&path).unwrap();
+        let status = repo.get_file_status(&std::path::Path::new("file.txt")).unwrap();
+        assert_eq!(status, crate::core::repository::FileStatus::Unchanged);
+    }
+
+    #[test]
+    fn test_status_deleted_in_index() {
+        let (_tmp, path) = setup();
+        fs::write(path.join("file.txt"), "content").unwrap();
+        add::execute(&path, &vec!["file.txt".to_string()]).unwrap();
+        commit::execute(&path, "Author", "init").unwrap();
+
+        // file exists in index but removed in wd
+        fs::remove_file(path.join("file.txt")).unwrap();
+        // this should not panic or fail
+        let result = execute(&path);
+        assert!(result.is_ok());
+    }
+
+    #[test]
+    fn test_status_new_file_unstaged() {
+        let (_tmp, path) = setup();
+        fs::write(path.join("new.txt"), "new file").unwrap();
+        let repo = crate::core::repository::Repository::open(&path).unwrap();
+        let status = repo.get_file_status(&std::path::Path::new("new.txt")).unwrap();
+        assert_eq!(status, crate::core::repository::FileStatus::New);
+    }
 }

@@ -57,6 +57,9 @@ pub enum RvcsError {
     #[error("Path error: {0}")]
     PathError(String),
 
+    #[error("Cannot find a common ancestor to merge")]
+    NoCommonAncestor,
+
     #[error("{0}")]
     Other(String),
 }
