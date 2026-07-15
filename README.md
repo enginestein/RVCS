@@ -97,7 +97,7 @@ Each object is:
 
 ```bash
 # Clone the repository
-git clone <your-repo-url> rvcs
+git clone https://github.com/enginestein/RVCS.git
 cd rvcs
 
 # Build release binary (optimized)
